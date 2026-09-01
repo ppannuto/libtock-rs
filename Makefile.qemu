@@ -69,11 +69,40 @@ setup-tock: check-tock-dir
 	fi
 	@echo "Using Tock at $(TOCK_DIR) ($$(git -C "$(TOCK_DIR)" describe --always --dirty 2>/dev/null || echo 'not a git checkout'))"
 
-# Sets up QEMU in the tock/ directory. We use Tock's QEMU which may contain
-# patches to better support boards that Tock supports.
+# The QEMU to run. libtock-rs uses whichever QEMU is installed on the system
+# rather than building one; set this if yours is not on your PATH.
+#
+# Exported so that it reaches `runner`, which is what actually spawns QEMU.
+LIBTOCK_QEMU ?= qemu-system-riscv32
+export LIBTOCK_QEMU
+
+# Versions we have run these boards against, and versions known not to work.
+WORKING_QEMU_VERSIONS := 10.2.1
+BROKEN_QEMU_VERSIONS  := <= 8.1.5
+
+# Checks that a usable QEMU is present, and says which one is about to be used.
+# $(1) is the QEMU machine the caller needs.
+define check_qemu
+	@command -v "$(LIBTOCK_QEMU)" >/dev/null 2>&1 || { \
+		echo "Could not find '$(LIBTOCK_QEMU)'."; \
+		echo "Install a QEMU with 32-bit RISC-V support -- qemu-system-misc on"; \
+		echo "Debian and Ubuntu, qemu-system-riscv on Fedora, qemu on Homebrew --"; \
+		echo "or set LIBTOCK_QEMU to a qemu-system-riscv32 binary."; \
+		exit 1; \
+	}
+	@"$(LIBTOCK_QEMU)" -M help | grep -q "^$(1) " || { \
+		echo "$$("$(LIBTOCK_QEMU)" --version | head -n1) does not support the '$(1)' machine."; \
+		echo "(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"; \
+		exit 1; \
+	}
+	@echo "Running $$("$(LIBTOCK_QEMU)" --version | head -n1) with machine '$(1)'" \
+		"(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"
+endef
+
+# Reports whether a usable QEMU is installed, and what it is.
 .PHONY: setup-qemu
-setup-qemu: setup-tock
-	CI=true $(MAKE) -C $(TOCK_DIR) ci-setup-qemu
+setup-qemu:
+	$(call check_qemu,virt)
 
 # Builds a Tock 2.0 kernel for the HiFive board for use by QEMU tests.
 .PHONY: kernel-hifive
@@ -92,6 +121,7 @@ kernel-opentitan: setup-tock
 # Runs a libtock example in QEMU on a simulated HiFive board.
 .PHONY: qemu-example
 qemu-example: kernel-hifive toolchain
+	$(call check_qemu,sifive_e)
 	LIBTOCK_PLATFORM="hifive1" cargo run --example "$(EXAMPLE)" -p libtock \
 		--release --target=riscv32imac-unknown-none-elf -- --deploy qemu
 

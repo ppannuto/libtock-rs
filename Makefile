@@ -50,7 +50,7 @@ toolchain:
 	cargo -V
 
 .PHONY: setup
-setup: setup-qemu toolchain
+setup: toolchain
 	cargo install elf2tab
 
 # Prints out the sizes of the example binaries.
