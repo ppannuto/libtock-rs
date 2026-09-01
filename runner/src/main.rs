@@ -3,6 +3,7 @@ mod output_processor;
 mod qemu;
 mod tockloader;
 
+use clap::builder::NonEmptyStringValueParser;
 use clap::{Parser, ValueEnum};
 use std::env::{var, VarError};
 use std::path::PathBuf;
@@ -20,6 +21,11 @@ pub struct Cli {
     #[clap(action)]
     elf: PathBuf,
 
+    /// Shut the system down and report success as soon as this string
+    /// appears in its output.
+    #[clap(action, long, value_parser = NonEmptyStringValueParser::new())]
+    expect: Option<String>,
+
     /// The Tock kernel to boot, when deploying to QEMU.
     #[clap(action, long, required_if_eq("deploy", "qemu"))]
     kernel: Option<PathBuf>,
@@ -27,6 +33,10 @@ pub struct Cli {
     /// The QEMU binary to run, when deploying to QEMU.
     #[clap(action, long, required_if_eq("deploy", "qemu"))]
     qemu: Option<PathBuf>,
+
+    /// Terminate and fail if the system has not exited after this many seconds.
+    #[clap(action, long)]
+    timeout: Option<u64>,
 
     /// Whether to output verbose debugging information to the console.
     #[clap(long, short, action)]

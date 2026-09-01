@@ -24,3 +24,15 @@ jobs:
             --target=thumbv7em-none-eabi
           LIBTOCK_PLATFORM=hifive1 cargo build -p libtock \
             --target=riscv32imac-unknown-none-elf
+
+      # The primary purpose of this check is verifying the QEMU infrastructure
+      # works on Mac, so we don't need to re-run every board here, just one.
+      - name: Install QEMU
+        run: brew install qemu
+
+      - name: Run an example under QEMU
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          make setup-qemu
+          make qemu-example-qemu_rv32_virt EXAMPLE=console \
+            QEMU_EXPECT='Hello world!' QEMU_TIMEOUT=120 </dev/null

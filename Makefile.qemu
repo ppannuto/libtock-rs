@@ -73,6 +73,20 @@ setup-tock: check-tock-dir
 # rather than building one; set this if yours is not on your PATH.
 LIBTOCK_QEMU ?= qemu-system-riscv32
 
+# What an emulated board is expected to print. An emulated board runs until it
+# is interrupted, so a run with nobody at the keyboard -- a script, or a CI job
+# -- has to say what it came to see; the board is shut down and the run reported
+# as a success as soon as that text appears. Unset means run until interrupted,
+# which is what you want interactively.
+QEMU_EXPECT ?=
+
+# Give up on an emulated board after this many seconds, and fail. A backstop
+# against a run that hangs, so that it fails rather than waiting forever.
+QEMU_TIMEOUT ?=
+
+qemu_run_args = $(if $(QEMU_EXPECT),--expect '$(QEMU_EXPECT)',) \
+	$(if $(QEMU_TIMEOUT),--timeout $(QEMU_TIMEOUT),)
+
 # Versions we have run these boards against, and versions known not to work.
 WORKING_QEMU_VERSIONS := 10.2.1
 BROKEN_QEMU_VERSIONS  := <= 8.1.5
@@ -125,13 +139,12 @@ qemu-example-$(1): kernel-$(1) toolchain
 	LIBTOCK_PLATFORM="$(1)" cargo run --example "$$(EXAMPLE)" -p libtock \
 		--release --target=$(2) --target-dir=target/qemu-$(1) -- --deploy qemu \
 		--qemu "$$(LIBTOCK_QEMU)" \
-		--kernel $$(TOCK_DIR)/target/$(2)/release/$(4).elf
+		--kernel $$(TOCK_DIR)/target/$(2)/release/$(4).elf $$(qemu_run_args)
 endef
 
 $(eval $(call qemu_platform,hifive1,riscv32imac-unknown-none-elf,hifive1,hifive1,sifive_e))
 $(eval $(call qemu_platform,opentitan,riscv32imc-unknown-none-elf,opentitan/earlgrey-cw310,earlgrey-cw310,opentitan))
 $(eval $(call qemu_platform,qemu_rv32_virt,riscv32imac-unknown-none-elf,qemu_rv32_virt,qemu_rv32_virt,virt))
-
 
 # Removes the build artifacts in a Tock source tree we manage. A tree the user
 # supplied is left alone; its build artifacts are theirs, not ours.
