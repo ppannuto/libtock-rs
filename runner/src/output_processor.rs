@@ -1,17 +1,33 @@
 use super::Cli;
-use libc::{kill, pid_t, SIGINT};
 use std::io::{stderr, stdin, stdout, BufRead, BufReader, ErrorKind, Stdout, Write};
-use std::process::Child;
+use std::os::unix::process::ExitStatusExt;
+use std::process::{Child, ChildStderr, ChildStdin};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::spawn;
+use termion::is_tty;
 use termion::raw::{IntoRawMode, RawTerminal};
 
-/// Reads the console messages from `child`'s standard output, sending SIGTERM
-/// to the child when the process is terminated.
+/// Reads the console messages from `child`'s standard output, shutting the
+/// child down when the process is terminated.
 pub fn process(cli: &Cli, mut child: Child) {
-    let raw_mode = forward_stdin_if_piped(&mut child);
-    forward_stderr_if_piped(&mut child, raw_mode.is_some());
+    // The child's pipes are taken up front, so that reading them does not
+    // require the lock below. The threads that shut the child down need the
+    // Child itself, and the main loop spends nearly all of its time blocked
+    // reading the child's output, so sharing the Child through a mutex it does
+    // not hold while reading is what lets a shutdown arrive at any time.
+    let child_stdin = child.stdin.take();
+    let child_stdout = child.stdout.take().expect("Child's stdout not piped.");
+    let child_stderr = child.stderr.take();
+    // Set when we ask the child to shut down, so that we can tell the shutdown
+    // we asked for apart from the child dying on its own.
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let child = Arc::new(Mutex::new(child));
+
+    let raw_mode = forward_stdin_if_piped(child_stdin, child.clone(), shutdown_requested.clone());
+    forward_stderr_if_piped(child_stderr, raw_mode.is_some());
     let mut to_print = Vec::new();
-    let mut reader = BufReader::new(child.stdout.as_mut().expect("Child's stdout not piped."));
+    let mut reader = BufReader::new(child_stdout);
     loop {
         let buffer = reader
             .fill_buf()
@@ -42,21 +58,42 @@ pub fn process(cli: &Cli, mut child: Child) {
     if cli.verbose {
         println!("Waiting for child process.\r");
     }
-    let status = child.wait().expect("Unable to wait for child process");
+    let status = lock_child(&child)
+        .wait()
+        .expect("Unable to wait for child process");
     drop(raw_mode);
+    // Being killed by the signal we sent is how a shutdown we asked for looks,
+    // not a failure. Without this, pressing Ctrl+C -- the exit path this module
+    // goes out of its way to support -- ended every session with a panic.
+    let shut_down_on_request =
+        shutdown_requested.load(Ordering::SeqCst) && status.signal().is_some();
     assert!(
-        status.success(),
+        status.success() || shut_down_on_request,
         "Child process did not exit successfully. {status}"
     );
 }
 
+// Asks the child to exit, and records that we were the ones who asked. An error
+// from kill means the child has already exited, which is the outcome we wanted.
+fn request_shutdown(child: &Mutex<Child>, shutdown_requested: &AtomicBool) {
+    shutdown_requested.store(true, Ordering::SeqCst);
+    let _ = lock_child(child).kill();
+}
+
+fn lock_child(child: &Mutex<Child>) -> std::sync::MutexGuard<'_, Child> {
+    child.lock().expect("Child mutex was poisoned")
+}
+
 // If child's stdin is piped, this sets the terminal to raw mode and spawns a
-// thread that forwards our stdin to child's stdin. The thread sends SIGINT to
-// the child if Ctrl+C is pressed. Returns a RawTerminal, which reverts the
-// terminal to its previous configuration on drop.
-fn forward_stdin_if_piped(child: &mut Child) -> Option<RawTerminal<Stdout>> {
-    let mut child_stdin = child.stdin.take()?;
-    let child_id = child.id();
+// thread that forwards our stdin to child's stdin. The thread shuts the child
+// down if Ctrl+C is pressed. Returns a RawTerminal, which reverts the terminal
+// to its previous configuration on drop.
+fn forward_stdin_if_piped(
+    child_stdin: Option<ChildStdin>,
+    child: Arc<Mutex<Child>>,
+    shutdown_requested: Arc<AtomicBool>,
+) -> Option<RawTerminal<Stdout>> {
+    let mut child_stdin = child_stdin?;
     spawn(move || {
         let our_stdin = stdin();
         let mut our_stdin = our_stdin.lock();
@@ -76,24 +113,30 @@ fn forward_stdin_if_piped(child: &mut Child) -> Option<RawTerminal<Stdout>> {
             }
             match child_stdin.write(buffer) {
                 // A BrokenPipe error occurs when the child has exited. Exit
-                // without sending SIGINT.
+                // without shutting it down.
                 Err(error) if error.kind() == ErrorKind::BrokenPipe => return,
 
                 Err(error) => panic!("Failed to forward stdin: {error}"),
                 Ok(bytes) => our_stdin.consume(bytes),
             }
         }
-        // Send SIGINT to the child, telling it to exit. After the child exits,
-        // the main loop will detect the exit and we will shut down cleanly.
-        //
-        // Safety: Sending SIGINT to a process is a safe operation -- kill is
-        // marked unsafe because it is a FFI function.
-        unsafe {
-            kill(child_id as pid_t, SIGINT);
-        }
+        // Tell the child to exit. Once it does, the main loop will detect the
+        // exit and we will shut down cleanly.
+        request_shutdown(&child, &shutdown_requested);
     });
+    // Raw mode is what lets Ctrl+C reach us rather than the child, but it is
+    // only available on a terminal. When our output has been redirected to a
+    // file or a pipe -- a CI job, or a `make qemu-example-... | tee` -- there is
+    // no terminal to configure, and asking for one fails with ENOTTY. Run
+    // without it in that case: there is no interactive user to serve, and
+    // skipping raw mode also skips the CRLF rewriting that only a raw terminal
+    // needs.
+    let stdout = stdout();
+    if !is_tty(&stdout) {
+        return None;
+    }
     Some(
-        stdout()
+        stdout
             .into_raw_mode()
             .expect("Failed to set terminal to raw mode."),
     )
@@ -101,10 +144,9 @@ fn forward_stdin_if_piped(child: &mut Child) -> Option<RawTerminal<Stdout>> {
 
 // Forwards child's stderr to our stderr if child's stderr is piped, converting
 // line endings to CRLF if raw_mode is true.
-fn forward_stderr_if_piped(child: &mut Child, raw_mode: bool) {
-    let child_stderr = match child.stderr.take() {
-        None => return,
-        Some(child_stderr) => child_stderr,
+fn forward_stderr_if_piped(child_stderr: Option<ChildStderr>, raw_mode: bool) {
+    let Some(child_stderr) = child_stderr else {
+        return;
     };
     spawn(move || {
         let mut to_print = Vec::new();
