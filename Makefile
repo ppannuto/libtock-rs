@@ -53,36 +53,10 @@ toolchain:
 setup: setup-qemu toolchain
 	cargo install elf2tab
 
-# Sets up QEMU in the tock/ directory. We use Tock's QEMU which may contain
-# patches to better support boards that Tock supports.
-.PHONY: setup-qemu
-setup-qemu:
-	CI=true $(MAKE) -C tock ci-setup-qemu
-
-# Builds a Tock 2.0 kernel for the HiFive board for use by QEMU tests.
-.PHONY: kernel-hifive
-kernel-hifive:
-	$(MAKE) -C tock/boards/hifive1 \
-		$(CURDIR)/tock/target/riscv32imac-unknown-none-elf/release/hifive1.elf
-
-# Builds a Tock kernel for the OpenTitan board on the cw310 FPGA for use by QEMU
-# tests.
-.PHONY: kernel-opentitan
-kernel-opentitan:
-	CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUNNER="[]" \
-		$(MAKE) -C tock/boards/opentitan/earlgrey-cw310 \
-		$(CURDIR)/tock/target/riscv32imc-unknown-none-elf/release/earlgrey-cw310.elf
-
 # Prints out the sizes of the example binaries.
 .PHONY: print-sizes
 print-sizes: examples toolchain
 	cargo run --release -p print_sizes
-
-# Runs a libtock example in QEMU on a simulated HiFive board.
-.PHONY: qemu-example
-qemu-example: kernel-hifive toolchain
-	LIBTOCK_PLATFORM="hifive1" cargo run --example "$(EXAMPLE)" -p libtock \
-		--release --target=riscv32imac-unknown-none-elf -- --deploy qemu
 
 # Build the examples on both a RISC-V target and an ARM target. We pick
 # opentitan as the RISC-V target because it lacks atomics.
@@ -127,6 +101,7 @@ test: examples
 	echo '[ SUCCESS ] libtock-rs tests pass'
 
 include Targets.mk
+include Makefile.qemu
 
 $(ELF_TARGETS): toolchain
 	LIBTOCK_LINKER_FLASH=$(F) LIBTOCK_LINKER_RAM=$(R) cargo build --example $(EXAMPLE) $(features) --target=$(T) $(release)
@@ -218,8 +193,7 @@ demos:
 # target directory, in case the user doesn't want to install the nightly
 # toolchain.
 .PHONY: clean
-clean:
+clean: clean-qemu
 	cargo clean
 	rm -fr nightly/target/
 	@for demo in $(DEMOS); do (cd "$$demo" && cargo clean) || exit 1; done
-	$(MAKE) -C tock clean

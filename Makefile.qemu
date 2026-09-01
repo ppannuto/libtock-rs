@@ -1,0 +1,36 @@
+# Rules for building Tock kernels and running libtock-rs examples under QEMU.
+#
+# Everything that knows about a Tock kernel source tree or about QEMU lives in
+# this file; the main Makefile just includes it.
+
+# Sets up QEMU in the tock/ directory. We use Tock's QEMU which may contain
+# patches to better support boards that Tock supports.
+.PHONY: setup-qemu
+setup-qemu:
+	CI=true $(MAKE) -C tock ci-setup-qemu
+
+# Builds a Tock 2.0 kernel for the HiFive board for use by QEMU tests.
+.PHONY: kernel-hifive
+kernel-hifive:
+	$(MAKE) -C tock/boards/hifive1 \
+		$(CURDIR)/tock/target/riscv32imac-unknown-none-elf/release/hifive1.elf
+
+# Builds a Tock kernel for the OpenTitan board on the cw310 FPGA for use by QEMU
+# tests.
+.PHONY: kernel-opentitan
+kernel-opentitan:
+	CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUNNER="[]" \
+		$(MAKE) -C tock/boards/opentitan/earlgrey-cw310 \
+		$(CURDIR)/tock/target/riscv32imc-unknown-none-elf/release/earlgrey-cw310.elf
+
+# Runs a libtock example in QEMU on a simulated HiFive board.
+.PHONY: qemu-example
+qemu-example: kernel-hifive toolchain
+	LIBTOCK_PLATFORM="hifive1" cargo run --example "$(EXAMPLE)" -p libtock \
+		--release --target=riscv32imac-unknown-none-elf -- --deploy qemu
+
+# Removes the build artifacts in the Tock source tree. Invoked by the main
+# Makefile's `clean` target.
+.PHONY: clean-qemu
+clean-qemu:
+	$(MAKE) -C tock clean
