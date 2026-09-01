@@ -21,7 +21,11 @@ usage:
 	@echo "Run 'make setup' to setup Rust to build libtock-rs."
 	@echo "Run 'make <board> EXAMPLE=<>' to build EXAMPLE for that board."
 	@echo "Run 'make flash-<board> EXAMPLE=<>' to flash EXAMPLE to a tockloader-supported board."
-	@echo "Run 'make qemu-example EXAMPLE=<>' to run EXAMPLE in QEMU"
+	@echo
+	@echo "These boards can be emulated, with no hardware, using 'make qemu-example-<board>':"
+	@printf " - %s\n" $(sort $(QEMU_PLATFORMS))
+	@echo
+	@echo "Run 'make qemu-example-<board> EXAMPLE=<>' to run EXAMPLE in QEMU"
 	@echo "Run 'make test' to test any local changes you have made"
 	@echo "Run 'make print-sizes' to print size data for the example binaries"
 

@@ -20,6 +20,14 @@ pub struct Cli {
     #[clap(action)]
     elf: PathBuf,
 
+    /// The Tock kernel to boot, when deploying to QEMU.
+    #[clap(action, long, required_if_eq("deploy", "qemu"))]
+    kernel: Option<PathBuf>,
+
+    /// The QEMU binary to run, when deploying to QEMU.
+    #[clap(action, long, required_if_eq("deploy", "qemu"))]
+    qemu: Option<PathBuf>,
+
     /// Whether to output verbose debugging information to the console.
     #[clap(long, short, action)]
     verbose: bool,
