@@ -3,25 +3,91 @@
 # Everything that knows about a Tock kernel source tree or about QEMU lives in
 # this file; the main Makefile just includes it.
 
+# Where we keep a Tock checkout when the user hasn't pointed us at one.
+ifeq ($(shell uname -s),Darwin)
+LIBTOCK_CACHE_DIR ?= $(HOME)/Library/Caches/libtock-rs
+else
+LIBTOCK_CACHE_DIR ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)/libtock-rs
+endif
+
+# The Tock revision we build kernels from.
+# Pinned to a recent master (2026-09-01).
+TOCK_URL ?= https://github.com/tock/tock.git
+TOCK_COMMIT ?= 0aca6dae5307c35ff19856449891d5cb10342061
+
+# A Tock source tree to build kernels from.
+#
+# If you set this, libtock-rs treats the tree as yours: it is used exactly as it
+# is, and is never fetched, checked out, or cleaned. That is the way to test
+# against a Tock branch you are working on. If you don't set it, we maintain a
+# checkout pinned to TOCK_COMMIT under LIBTOCK_CACHE_DIR.
+TOCK_DIR ?= $(LIBTOCK_CACHE_DIR)/tock
+TOCK_DIR_IS_OURS := $(if $(filter $(LIBTOCK_CACHE_DIR)/tock,$(TOCK_DIR)),true,)
+
+# Tock's board build scripts require the rustflags from Tock's own cargo
+# configuration, including a sentinel cfg that their build.rs asserts on. A
+# `target.'cfg(...)'.rustflags` entry replaces rather than merges with a
+# `build.rustflags` entry, so libtock-rs' .cargo/config.toml silently displaces
+# Tock's flags for any tree underneath this repository, and the kernel build
+# fails with "Incorrect build configuration". Catch that here, where we can
+# explain it, rather than letting it surface from a build script.
+.PHONY: check-tock-dir
+check-tock-dir:
+	@case "$$(cd "$(dir $(TOCK_DIR))" 2>/dev/null && pwd -P)/" in \
+		"$(CURDIR)"/*) \
+			echo "TOCK_DIR ($(TOCK_DIR)) is inside the libtock-rs repository."; \
+			echo "Tock kernels cannot be built there: libtock-rs' .cargo/config.toml"; \
+			echo "applies to every tree beneath it and displaces the rustflags Tock's"; \
+			echo "boards require. Point TOCK_DIR somewhere outside $(CURDIR)."; \
+			exit 1;; \
+	esac
+
+# Makes sure a Tock source tree is available at TOCK_DIR.
+#
+# A tree the user supplied is only checked for existence. One of ours is created
+# on demand and pinned to TOCK_COMMIT; we fetch a single commit rather than
+# cloning, as Tock's history is an order of magnitude larger than its worktree.
+.PHONY: setup-tock
+setup-tock: check-tock-dir
+	@if [ -n "$(TOCK_DIR_IS_OURS)" ]; then \
+		if [ "$$(git -C "$(TOCK_DIR)" rev-parse HEAD 2>/dev/null)" != "$(TOCK_COMMIT)" ]; then \
+			echo "Fetching Tock $(TOCK_COMMIT) into $(TOCK_DIR)"; \
+			mkdir -p "$(TOCK_DIR)"; \
+			git -C "$(TOCK_DIR)" rev-parse --git-dir >/dev/null 2>&1 || \
+				git -C "$(TOCK_DIR)" init -q; \
+			git -C "$(TOCK_DIR)" remote get-url origin >/dev/null 2>&1 || \
+				git -C "$(TOCK_DIR)" remote add origin "$(TOCK_URL)"; \
+			git -C "$(TOCK_DIR)" fetch -q --depth 1 origin "$(TOCK_COMMIT)"; \
+			git -C "$(TOCK_DIR)" checkout -q --detach FETCH_HEAD; \
+		fi; \
+	elif [ ! -d "$(TOCK_DIR)" ]; then \
+		echo "TOCK_DIR ($(TOCK_DIR)) does not exist."; \
+		echo "TOCK_DIR names a Tock checkout to build kernels from. libtock-rs does"; \
+		echo "not create or modify a tree you provide. Either create it, or unset"; \
+		echo "TOCK_DIR to use a managed checkout under $(LIBTOCK_CACHE_DIR)."; \
+		exit 1; \
+	fi
+	@echo "Using Tock at $(TOCK_DIR) ($$(git -C "$(TOCK_DIR)" describe --always --dirty 2>/dev/null || echo 'not a git checkout'))"
+
 # Sets up QEMU in the tock/ directory. We use Tock's QEMU which may contain
 # patches to better support boards that Tock supports.
 .PHONY: setup-qemu
-setup-qemu:
-	CI=true $(MAKE) -C tock ci-setup-qemu
+setup-qemu: setup-tock
+	CI=true $(MAKE) -C $(TOCK_DIR) ci-setup-qemu
 
 # Builds a Tock 2.0 kernel for the HiFive board for use by QEMU tests.
 .PHONY: kernel-hifive
-kernel-hifive:
-	$(MAKE) -C tock/boards/hifive1 \
-		$(CURDIR)/tock/target/riscv32imac-unknown-none-elf/release/hifive1.elf
+kernel-hifive: setup-tock
+	$(MAKE) -C $(TOCK_DIR)/boards/hifive1 \
+		$(TOCK_DIR)/target/riscv32imac-unknown-none-elf/release/hifive1.elf
 
 # Builds a Tock kernel for the OpenTitan board on the cw310 FPGA for use by QEMU
 # tests.
 .PHONY: kernel-opentitan
-kernel-opentitan:
+kernel-opentitan: setup-tock
 	CARGO_TARGET_RISCV32IMC_UNKNOWN_NONE_ELF_RUNNER="[]" \
-		$(MAKE) -C tock/boards/opentitan/earlgrey-cw310 \
-		$(CURDIR)/tock/target/riscv32imc-unknown-none-elf/release/earlgrey-cw310.elf
+		$(MAKE) -C $(TOCK_DIR)/boards/opentitan/earlgrey-cw310 \
+		$(TOCK_DIR)/target/riscv32imc-unknown-none-elf/release/earlgrey-cw310.elf
 
 # Runs a libtock example in QEMU on a simulated HiFive board.
 .PHONY: qemu-example
@@ -29,8 +95,16 @@ qemu-example: kernel-hifive toolchain
 	LIBTOCK_PLATFORM="hifive1" cargo run --example "$(EXAMPLE)" -p libtock \
 		--release --target=riscv32imac-unknown-none-elf -- --deploy qemu
 
-# Removes the build artifacts in the Tock source tree. Invoked by the main
-# Makefile's `clean` target.
+# Removes the build artifacts in a Tock source tree we manage. A tree the user
+# supplied is left alone; its build artifacts are theirs, not ours.
 .PHONY: clean-qemu
 clean-qemu:
-	$(MAKE) -C tock clean
+	@if [ -n "$(TOCK_DIR_IS_OURS)" ] && [ -f "$(TOCK_DIR)/Makefile" ]; then \
+		$(MAKE) -C "$(TOCK_DIR)" clean; \
+	fi
+
+# Removes the managed Tock checkout entirely. Not part of `clean`, as refetching
+# it is far more expensive than rebuilding it.
+.PHONY: clean-tock-cache
+clean-tock-cache:
+	rm -rf "$(LIBTOCK_CACHE_DIR)/tock"

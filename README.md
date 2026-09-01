@@ -21,7 +21,7 @@ builds examples for a series of likely useful flash and RAM addresses.
 1.  Clone the repository:
 
     ```shell
-    git clone --recursive https://github.com/tock/libtock-rs
+    git clone https://github.com/tock/libtock-rs
     cd libtock-rs
     ```
 

@@ -21,13 +21,8 @@ jobs:
     steps:
       # Clones a single commit from the libtock-rs repository. The commit cloned
       # is a merge commit between the PR's target branch and the PR's source.
-      # Note that we checkout submodules so that we can invoke Tock's CI setup
-      # scripts, but we do not recursively checkout submodules as we need Tock's
-      # makefile to set up the qemu submodule itself.
       - name: Clone repository
         uses: actions/checkout@v7
-        with:
-          submodules: true
 
       # The main test step. We let the makefile do most of the work because the
       # makefile can be tested locally. We experimentally determined that -j2 is
