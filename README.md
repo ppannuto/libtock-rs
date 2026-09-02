@@ -33,9 +33,9 @@ builds examples for a series of likely useful flash and RAM addresses.
     ```
 
 1.  If you want to run examples under emulation, install a QEMU with 32-bit
-    RISC-V support: `qemu-system-misc` on Debian and Ubuntu,
-    `qemu-system-riscv` on Fedora, `qemu` on Homebrew. `make setup-qemu`
-    reports whether the one you have will do.
+    RISC-V support: `qemu-system-misc` or, on newer releases, `qemu-system-riscv`
+    on Debian and Ubuntu; `qemu-system-riscv` on Fedora; `qemu` on Homebrew.
+    `make setup-qemu` reports whether the one you have will do.
 
 1.  Use `make` to build examples
 
