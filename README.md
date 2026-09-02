@@ -96,7 +96,7 @@ build against a Tock tree of your own instead — a branch you are working on,
 say — point `TOCK_DIR` at it:
 
 ```shell
-make qemu-example-qemu_rv32_virt EXAMPLE=console TOCK_DIR=~/src/tock
+make qemu-example-qemu_rv32_virt EXAMPLE=console TOCK_DIR=$HOME/src/tock
 ```
 
 A tree you supply this way is used exactly as it is: libtock-rs never fetches

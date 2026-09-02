@@ -26,6 +26,7 @@ usage:
 	@printf " - %s\n" $(sort $(QEMU_PLATFORMS))
 	@echo
 	@echo "Run 'make qemu-example-<board> EXAMPLE=<>' to run EXAMPLE in QEMU"
+	@echo "Run 'make clean-tock-cache' to discard the Tock checkout those use"
 	@echo "Run 'make test' to test any local changes you have made"
 	@echo "Run 'make print-sizes' to print size data for the example binaries"
 
