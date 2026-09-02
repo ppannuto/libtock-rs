@@ -47,17 +47,22 @@ check-tock-dir:
 # A tree the user supplied is only checked for existence. One of ours is created
 # on demand and pinned to TOCK_COMMIT; we fetch a single commit rather than
 # cloning, as Tock's history is an order of magnitude larger than its worktree.
+#
+# Every git command names the repository explicitly, because git searches parent
+# directories for one: without that, a cache directory that happens to sit
+# inside a repository -- a home directory under version control, say -- would be
+# the repository we fetched into and checked out.
 .PHONY: setup-tock
 setup-tock: check-tock-dir
 	@if [ -n "$(TOCK_DIR_IS_OURS)" ]; then \
-		if [ "$$(git -C "$(TOCK_DIR)" rev-parse HEAD 2>/dev/null)" != "$(TOCK_COMMIT)" ]; then \
+		head=""; \
+		if [ -e "$(TOCK_DIR)/.git" ]; then \
+			head="$$(git --git-dir="$(TOCK_DIR)/.git" rev-parse HEAD 2>/dev/null)"; \
+		fi; \
+		if [ "$$head" != "$(TOCK_COMMIT)" ]; then \
 			echo "Fetching Tock $(TOCK_COMMIT) into $(TOCK_DIR)"; \
-			mkdir -p "$(TOCK_DIR)"; \
-			git -C "$(TOCK_DIR)" rev-parse --git-dir >/dev/null 2>&1 || \
-				git -C "$(TOCK_DIR)" init -q; \
-			git -C "$(TOCK_DIR)" remote get-url origin >/dev/null 2>&1 || \
-				git -C "$(TOCK_DIR)" remote add origin "$(TOCK_URL)"; \
-			git -C "$(TOCK_DIR)" fetch -q --depth 1 origin "$(TOCK_COMMIT)"; \
+			git init -q "$(TOCK_DIR)" && \
+			git -C "$(TOCK_DIR)" fetch -q --depth 1 "$(TOCK_URL)" "$(TOCK_COMMIT)" && \
 			git -C "$(TOCK_DIR)" checkout -q --detach FETCH_HEAD; \
 		fi; \
 	elif [ ! -d "$(TOCK_DIR)" ]; then \
@@ -67,7 +72,11 @@ setup-tock: check-tock-dir
 		echo "TOCK_DIR to use a managed checkout under $(LIBTOCK_CACHE_DIR)."; \
 		exit 1; \
 	fi
-	@echo "Using Tock at $(TOCK_DIR) ($$(git -C "$(TOCK_DIR)" describe --always --dirty 2>/dev/null || echo 'not a git checkout'))"
+	@if [ -e "$(TOCK_DIR)/.git" ]; then \
+		echo "Using Tock at $(TOCK_DIR) ($$(git -C "$(TOCK_DIR)" describe --always --dirty))"; \
+	else \
+		echo "Using Tock at $(TOCK_DIR) (not a git checkout)"; \
+	fi
 
 # The QEMU to run. libtock-rs uses whichever QEMU is installed on the system
 # rather than building one; set this if yours is not on your PATH.
