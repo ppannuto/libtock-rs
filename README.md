@@ -4,8 +4,9 @@
 
 Rust userland library for Tock
 
-Generally this library was tested with Tock [Release
-2.1.1](https://github.com/tock/tock/releases/tag/release-2.1.1).
+Generally this library tracks recent Tock master; the kernels it builds to run
+examples under emulation are pinned to a specific commit (`TOCK_COMMIT` in
+`Makefile.qemu`).
 
 The library should work on all Tock boards, but currently apps must be compiled
 for the flash and RAM address they are executed at. See [Fix
