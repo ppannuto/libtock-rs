@@ -31,9 +31,15 @@ TOCK_DIR_IS_OURS := $(if $(filter $(LIBTOCK_CACHE_DIR)/tock,$(TOCK_DIR)),true,)
 # Tock's flags for any tree underneath this repository, and the kernel build
 # fails with "Incorrect build configuration". Catch that here, where we can
 # explain it, rather than letting it surface from a build script.
+#
+# TOCK_DIR need not exist yet, so resolve it lexically when it is not there to
+# be resolved for real. That does not follow symlinks, but it is better than
+# having no path to compare at all.
 .PHONY: check-tock-dir
 check-tock-dir:
-	@case "$$(cd "$(dir $(TOCK_DIR))" 2>/dev/null && pwd -P)/" in \
+	@if [ -d "$(TOCK_DIR)" ]; then dir="$$(cd "$(TOCK_DIR)" && pwd -P)"; \
+	else dir="$(abspath $(TOCK_DIR))"; fi; \
+	case "$$dir/" in \
 		"$(CURDIR)"/*) \
 			echo "TOCK_DIR ($(TOCK_DIR)) is inside the libtock-rs repository."; \
 			echo "Tock kernels cannot be built there: libtock-rs' .cargo/config.toml"; \
@@ -167,4 +173,4 @@ clean-qemu:
 # it is far more expensive than rebuilding it.
 .PHONY: clean-tock-cache
 clean-tock-cache:
-	rm -rf "$(LIBTOCK_CACHE_DIR)/tock"
+	@[ -z "$(LIBTOCK_CACHE_DIR)" ] || rm -rf "$(LIBTOCK_CACHE_DIR)/tock"
