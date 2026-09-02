@@ -99,7 +99,10 @@ QEMU_EXPECT ?=
 # against a run that hangs, so that it fails rather than waiting forever.
 QEMU_TIMEOUT ?=
 
-qemu_run_args = $(if $(QEMU_EXPECT),--expect '$(QEMU_EXPECT)',) \
+# Passed through the environment rather than interpolated into the recipe, so
+# that the text can contain whatever the board prints, quotes included.
+export QEMU_EXPECT
+qemu_run_args = $(if $(QEMU_EXPECT),--expect "$$QEMU_EXPECT",) \
 	$(if $(QEMU_TIMEOUT),--timeout $(QEMU_TIMEOUT),)
 
 # Versions we have run these boards against, and versions known not to work.
@@ -107,7 +110,7 @@ WORKING_QEMU_VERSIONS := 10.2.1
 BROKEN_QEMU_VERSIONS  := <= 8.1.5
 
 # Checks that a usable QEMU is present, and says which one is about to be used.
-# $(1) is the QEMU machine the caller needs.
+# $(1) is the QEMU machine, or the machines, the caller needs.
 define check_qemu
 	@command -v "$(LIBTOCK_QEMU)" >/dev/null 2>&1 || { \
 		echo "Could not find '$(LIBTOCK_QEMU)'."; \
@@ -116,19 +119,23 @@ define check_qemu
 		echo "or set LIBTOCK_QEMU to a qemu-system-riscv32 binary."; \
 		exit 1; \
 	}
-	@"$(LIBTOCK_QEMU)" -M help | grep -q "^$(1) " || { \
-		echo "$$("$(LIBTOCK_QEMU)" --version | head -n1) does not support the '$(1)' machine."; \
-		echo "(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"; \
-		exit 1; \
-	}
-	@echo "Running $$("$(LIBTOCK_QEMU)" --version | head -n1) with machine '$(1)'" \
+	@for machine in $(1); do \
+		"$(LIBTOCK_QEMU)" -M help | grep -q "^$$machine " || { \
+			echo "$$("$(LIBTOCK_QEMU)" --version | head -n1) does not support the" \
+				"'$$machine' machine."; \
+			echo "(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"; \
+			exit 1; \
+		}; \
+	done
+	@echo "Running $$("$(LIBTOCK_QEMU)" --version | head -n1) with machine(s) '$(1)'" \
 		"(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"
 endef
 
-# Reports whether a usable QEMU is installed, and what it is.
+# Reports whether a usable QEMU is installed, and what it is. Every machine is
+# checked, as this is the answer to "will the QEMU I have run these boards?".
 .PHONY: setup-qemu
 setup-qemu:
-	$(call check_qemu,virt)
+	$(call check_qemu,$(sort $(QEMU_MACHINES)))
 
 # Creates the `make kernel-<PLATFORM>` and `make qemu-example-<PLATFORM>`
 # targets for a board that QEMU can emulate. Arguments:
@@ -136,11 +143,12 @@ setup-qemu:
 #  2) The rust target the platform uses.
 #  3) The board's directory under the Tock tree's boards/.
 #  4) The name of the kernel binary that board produces.
-#  5) The QEMU machine the board runs on, checked before we build anything.
+#  5) The QEMU machine the board runs on, checked before the board is started.
 #
 # Each platform is added to QEMU_PLATFORMS, which the `usage` target prints.
 define qemu_platform
 QEMU_PLATFORMS += $(1)
+QEMU_MACHINES += $(5)
 
 .PHONY: kernel-$(1)
 kernel-$(1): setup-tock
