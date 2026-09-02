@@ -63,6 +63,9 @@ fn main() {
     if cli.verbose {
         println!("Detected platform {platform}");
     }
+    if matches!(cli.deploy, Some(Deploy::Qemu)) {
+        output_processor::check_run_can_end(&cli);
+    }
     let paths = elf2tab::convert_elf(&cli, &platform);
     let deploy = match cli.deploy {
         None => return,

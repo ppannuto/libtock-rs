@@ -1,13 +1,43 @@
 use super::Cli;
 use std::io::{stderr, stdin, stdout, BufRead, BufReader, ErrorKind, Stdout, Write};
 use std::os::unix::process::ExitStatusExt;
-use std::process::{Child, ChildStderr, ChildStdin};
+use std::process::{exit, Child, ChildStderr, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn};
 use std::time::Duration;
 use termion::is_tty;
 use termion::raw::{IntoRawMode, RawTerminal};
+
+// The signal Child::kill sends. Rather than depend on libc for one constant, we
+// name the number POSIX fixes it at.
+const SIGKILL: i32 = 9;
+
+// How long the timeout thread gives the rest of the runner to finish reporting
+// the timeout before it ends the process itself.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// Panics unless something would eventually end an emulated run.
+///
+/// An emulated board runs until it is interrupted, and the only thing that
+/// interrupts one is a person pressing Ctrl+C. Without a terminal there is no
+/// such person, so the run needs --expect or --timeout to say when it is over.
+/// Deciding this before the board is started keeps a misconfigured run from
+/// booting one only to shut it down before it has printed anything -- which,
+/// being a shutdown we asked for, would be reported as a success.
+pub fn check_run_can_end(cli: &Cli) {
+    assert!(
+        interactive() || cli.expect.is_some() || cli.timeout.is_some(),
+        "Nothing would end this run: it has no terminal to interrupt it, and \
+         neither --expect nor --timeout was given."
+    );
+}
+
+// Whether there is a person at both ends of this run: a terminal we can
+// configure, and a stdin they can type at.
+fn interactive() -> bool {
+    is_tty(&stdin()) && is_tty(&stdout())
+}
 
 /// Reads the console messages from `child`'s standard output, shutting the
 /// child down when the process is terminated.
@@ -91,21 +121,37 @@ pub fn process(cli: &Cli, mut child: Child) {
     if cli.verbose {
         println!("Waiting for child process.\r");
     }
-    let status = lock_child(&child)
-        .wait()
-        .expect("Unable to wait for child process");
+    // wait() would hold the child mutex for as long as the child runs, which
+    // would block the threads whose whole job is to end it. Poll instead, so
+    // that the lock is only ever held for the length of one try_wait.
+    let status = loop {
+        let waited = lock_child(&child)
+            .try_wait()
+            .expect("Unable to wait for child process");
+        match waited {
+            Some(status) => break status,
+            None => sleep(Duration::from_millis(50)),
+        }
+    };
     drop(raw_mode);
-    if let Some(timeout) = cli.timeout {
-        assert!(
-            !timed_out.load(Ordering::SeqCst),
-            "Child process did not finish within {timeout} seconds."
-        );
+    // Seeing what we came for is the run succeeding, even if the timeout fired
+    // in the same instant, so the timeout is only a failure when the run had
+    // nothing else to end it.
+    if !expectation_met {
+        if let Some(timeout) = cli.timeout {
+            assert!(
+                !timed_out.load(Ordering::SeqCst),
+                "Child process did not finish within {timeout} seconds."
+            );
+        }
     }
     // Being killed by the signal we sent is how a shutdown we asked for looks,
     // not a failure. Without this, pressing Ctrl+C -- the exit path this module
-    // goes out of its way to support -- ended every session with a panic.
+    // goes out of its way to support -- ended every session with a panic. Any
+    // other signal is the child dying of something we did not ask for, which is
+    // still a failure.
     let shut_down_on_request =
-        shutdown_requested.load(Ordering::SeqCst) && status.signal().is_some();
+        shutdown_requested.load(Ordering::SeqCst) && status.signal() == Some(SIGKILL);
     assert!(
         status.success() || shut_down_on_request,
         "Child process did not exit successfully. {status}"
@@ -177,18 +223,19 @@ fn forward_stdin_if_piped(
         request_shutdown(&child, &shutdown_requested);
     });
     // Raw mode is what lets Ctrl+C reach us rather than the child, but it is
-    // only available on a terminal. When our output has been redirected to a
-    // file or a pipe -- a CI job, or a `make qemu-example-... | tee` -- there is
-    // no terminal to configure, and asking for one fails with ENOTTY. Run
-    // without it in that case: there is no interactive user to serve, and
-    // skipping raw mode also skips the CRLF rewriting that only a raw terminal
-    // needs.
-    let stdout = stdout();
-    if !is_tty(&stdout) {
+    // only available on a terminal, and it is only any use when the thread
+    // above is reading stdin to receive what it delivers. When either end has
+    // been redirected -- a CI job, or a `make qemu-example-... </dev/null` --
+    // leave the terminal alone. Asking for raw mode without a terminal fails
+    // with ENOTTY; asking for it without a stdin to read turns off the
+    // terminal's own Ctrl+C while nothing is left to notice the byte it sends
+    // instead, leaving no way at all to interrupt the run. Skipping raw mode
+    // also skips the CRLF rewriting that only a raw terminal needs.
+    if !interactive() {
         return None;
     }
     Some(
-        stdout
+        stdout()
             .into_raw_mode()
             .expect("Failed to set terminal to raw mode."),
     )
@@ -206,6 +253,16 @@ fn shut_down_after_timeout(
         sleep(Duration::from_secs(timeout));
         timed_out.store(true, Ordering::SeqCst);
         request_shutdown(&child, &shutdown_requested);
+        // Killing the child normally ends the run: the main thread sees its
+        // stdout close, and reports the timeout. It does not if anything else
+        // is holding that pipe open -- a process the child spawned, say -- in
+        // which case the main thread stays blocked reading a pipe nothing will
+        // ever write to again, and a timeout that cannot end the run is not a
+        // backstop. Give the rest of the runner a moment to report this
+        // properly, and end the process ourselves if it does not.
+        sleep(SHUTDOWN_GRACE);
+        eprintln!("Child process did not finish within {timeout} seconds.");
+        exit(1);
     });
 }
 
