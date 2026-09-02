@@ -13,25 +13,10 @@ usage:
 	@echo
 	@echo "The next step is to choose a board to build Tock for. Mainline"
 	@echo "libtock-rs currently includes support for the following platforms:"
-	@echo " - apollo3"
-	@echo " - clue_nrf52840"
-	@echo " - esp32_c3_devkitm_1"
-	@echo " - hail"
-	@echo " - hifive1"
-	@echo " - imxrt1050"
-	@echo " - microbit_v2"
-	@echo " - nrf52"
-	@echo " - nrf52840"
-	@echo " - nucleo_f429zi"
-	@echo " - nucleo_f446re"
-	@echo " - opentitan"
-	@echo " - qemu_rv32_virt"
-	@echo " - stm32f3discovery"
-	@echo " - stm32f412gdiscovery"
-	@echo " - esp32_c3_devkitm_1"
-	@echo " - clue_nrf52840"
-	@echo " - raspberry_pi_pico"
-	@echo " - pico_explorer_base"
+	@printf " - %s\n" $(sort $(PLATFORMS))
+	@echo
+	@echo "Of those, the following can be flashed directly with 'make flash-<board>':"
+	@printf " - %s\n" $(sort $(FLASH_PLATFORMS))
 	@echo
 	@echo "Run 'make setup' to setup Rust to build libtock-rs."
 	@echo "Run 'make <board> EXAMPLE=<>' to build EXAMPLE for that board."
@@ -158,10 +143,13 @@ tab: $(ELF_TARGETS)
 #  1) The name of the platform to build for.
 #  2) The target architecture the platform uses.
 #
+# PLATFORMS accumulates the canonical list to prevent drift.
+#
 # A different --target-dir is passed for each platform to prevent race
 # conditions between concurrent cargo run invocations. See
 # https://github.com/tock/libtock-rs/issues/366 for more information.
 define platform_build
+PLATFORMS += $(1)
 .PHONY: $(1)
 $(1): toolchain
 	LIBTOCK_PLATFORM=$(1) cargo run --example $(EXAMPLE) $(features) \
@@ -173,7 +161,11 @@ endef
 
 # Creates the `make flash-<BOARD> EXAMPLE=<EXAMPLE>` targets. Arguments:
 #  1) The name of the platform to flash for.
+#  2) The target architecture the platform uses.
+#
+# FLASH_PLATFORMS accumulates the canonical list to prevent drift.
 define platform_flash
+FLASH_PLATFORMS += $(1)
 .PHONY: flash-$(1)
 flash-$(1): toolchain
 	LIBTOCK_PLATFORM=$(1) cargo run --example $(EXAMPLE) $(features) \
@@ -210,12 +202,16 @@ $(eval $(call platform_build,clue_nrf52840,thumbv7em-none-eabi))
 $(eval $(call platform_flash,clue_nrf52840,thumbv7em-none-eabi))
 $(eval $(call platform_build,psc3m5_evk,thumbv8m.main-none-eabi))
 
+# The demo apps. Each is a standalone cargo workspace with its own Makefile and
+# its own target directory, so blanket rules have to visit each of them.
+DEMOS := demos/embedded_graphics/spin \
+         demos/embedded_graphics/buttons \
+         demos/st7789 \
+         demos/st7789-slint
+
 .PHONY: demos
 demos:
-	$(MAKE) -C demos/embedded_graphics/spin
-	$(MAKE) -C demos/embedded_graphics/buttons
-	$(MAKE) -C demos/st7789
-	$(MAKE) -C demos/st7789-slint
+	@for demo in $(DEMOS); do $(MAKE) -C "$$demo" || exit 1; done
 
 # clean cannot safely be invoked concurrently with other actions, so we don't
 # need to depend on toolchain. We also manually remove the nightly toolchain's
@@ -225,5 +221,5 @@ demos:
 clean:
 	cargo clean
 	rm -fr nightly/target/
-	cd demos/st7789 && cargo clean
+	@for demo in $(DEMOS); do (cd "$$demo" && cargo clean) || exit 1; done
 	$(MAKE) -C tock clean

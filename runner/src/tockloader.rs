@@ -46,6 +46,12 @@ pub fn deploy(cli: &Cli, platform: String, tab_path: PathBuf) -> Child {
         // messages printed quickly after the process binary is deployed.
         "nrf52" | "nrf52840" => false,
 
+        // Nobody has confirmed how reliable tockloader listen is on the CLUE,
+        // so report it as unreliable until someone with the hardware can say
+        // otherwise. Reporting it as unreliable only costs a warning, whereas
+        // reporting it as reliable would hide dropped messages.
+        "clue_nrf52840" => false,
+
         // We shouldn't hit this case, because the flag determination code above
         // should error out on unknown platforms.
         _ => panic!("Unknown reliability for {platform}"),
