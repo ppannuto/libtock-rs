@@ -272,3 +272,61 @@ fn forward_stderr_if_piped(child_stderr: Option<ChildStderr>, raw_mode: bool) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Expected;
+
+    #[test]
+    fn match_within_one_read() {
+        let mut expected = Expected::new("world");
+        assert!(!expected.seen_in(b"Entering main loop.\n"));
+        assert!(expected.seen_in(b"Hello world!\n"));
+    }
+
+    // The child's output arrives in whatever sized pieces the pipe hands us, so
+    // a match is not guaranteed to fall inside a single read.
+    #[test]
+    fn match_split_across_reads() {
+        let mut expected = Expected::new("Hello world!");
+        assert!(!expected.seen_in(b"He"));
+        assert!(!expected.seen_in(b"llo wor"));
+        assert!(expected.seen_in(b"ld! tock$ "));
+    }
+
+    #[test]
+    fn match_longer_than_any_one_read() {
+        let mut expected = Expected::new("abcdef");
+        assert!(!expected.seen_in(b"ab"));
+        assert!(!expected.seen_in(b"cd"));
+        assert!(expected.seen_in(b"ef"));
+    }
+
+    // A one-byte string has no tail to keep, which is the boundary case of the
+    // bookkeeping in seen_in.
+    #[test]
+    fn single_byte_string() {
+        let mut expected = Expected::new("$");
+        assert!(!expected.seen_in(b"Hello world!\n"));
+        assert!(expected.seen_in(b"tock$ "));
+    }
+
+    // A board that never prints what we are waiting for can produce arbitrarily
+    // much output, so what we retain of it must stay bounded.
+    #[test]
+    fn tail_does_not_grow() {
+        let mut expected = Expected::new("xyz");
+        for _ in 0..1000 {
+            assert!(!expected.seen_in(b"Hello world!\n"));
+        }
+        assert_eq!(expected.tail.len(), 2);
+    }
+
+    // Output the child produced before the string does not become part of it.
+    #[test]
+    fn no_match_across_a_gap() {
+        let mut expected = Expected::new("ab");
+        assert!(!expected.seen_in(b"a"));
+        assert!(!expected.seen_in(b"cb"));
+    }
+}
