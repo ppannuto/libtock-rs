@@ -11,7 +11,8 @@ LIBTOCK_CACHE_DIR ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)/li
 endif
 
 # The Tock revision we build kernels from.
-# Pinned to a recent master (2026-09-01).
+# Pinned to a recent master (2026-09-01). To move it, change TOCK_COMMIT; the
+# next build refetches, and `make clean-tock-cache` discards the old tree.
 TOCK_URL ?= https://github.com/tock/tock.git
 TOCK_COMMIT ?= 0aca6dae5307c35ff19856449891d5cb10342061
 
@@ -95,8 +96,10 @@ LIBTOCK_QEMU ?= qemu-system-riscv32
 # which is what you want interactively.
 QEMU_EXPECT ?=
 
-# Give up on an emulated board after this many seconds, and fail. A backstop
-# against a run that hangs, so that it fails rather than waiting forever.
+# Give up on an emulated board after this many seconds, and fail. A backstop for
+# a QEMU_EXPECT that never arrives, so that the run fails rather than waiting
+# forever. On its own it only bounds a board that would otherwise run until it
+# is interrupted, which every emulated board does.
 QEMU_TIMEOUT ?=
 
 # Passed through the environment rather than interpolated into the recipe, so

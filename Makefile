@@ -190,7 +190,10 @@ DEMOS := demos/embedded_graphics/spin \
 
 .PHONY: demos
 demos:
-	@for demo in $(DEMOS); do $(MAKE) -C "$$demo" || exit 1; done
+	@for demo in $(DEMOS); do \
+		echo "$(MAKE) -C $$demo"; \
+		$(MAKE) -C "$$demo" || exit 1; \
+	done
 
 # clean cannot safely be invoked concurrently with other actions, so we don't
 # need to depend on toolchain. We also manually remove the nightly toolchain's
