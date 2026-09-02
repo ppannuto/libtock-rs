@@ -219,6 +219,10 @@ struct Expected {
 
 impl Expected {
     fn new(string: &str) -> Self {
+        // An empty string has nothing to look for and would make the
+        // bookkeeping below underflow. --expect rejects one, so this only has
+        // to catch a future caller that does not.
+        assert!(!string.is_empty(), "Expected string is empty.");
         Self {
             string: string.into(),
             tail: Vec::new(),
@@ -320,6 +324,12 @@ mod tests {
             assert!(!expected.seen_in(b"Hello world!\n"));
         }
         assert_eq!(expected.tail.len(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected string is empty.")]
+    fn empty_string_rejected() {
+        Expected::new("");
     }
 
     // Output the child produced before the string does not become part of it.
