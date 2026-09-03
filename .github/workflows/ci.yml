@@ -15,15 +15,9 @@ jobs:
     # point at a new Ubuntu version. Instead, explicitly specify the version, so
     # we can update when we need to. This *could* break if we don't update it
     # until support for this version is dropped, but it is likely we'll have a
-    # reason to update to a newer Ubuntu before then anyway.
-    #
-    # 24.04 is the floor: the emulated boards need QEMU 8.2 or newer.
+    # reason to update to a newer Ubuntu before then anyway. Moved from 22.04 to
+    # keep the pin on a current LTS.
     runs-on: ubuntu-24.04
-
-    # Nothing here should run for hours. The emulated boards carry a timeout of
-    # their own, so a board that hangs fails in seconds; this is the outer bound
-    # on everything else.
-    timeout-minutes: 60
 
     steps:
       # Clones a single commit from the libtock-rs repository. The commit cloned
@@ -49,20 +43,28 @@ jobs:
           make -j2 test
           make demos
 
-      # Installed after the build, so that a failure in the code itself does not
-      # wait on an install it will never use.
+  # Verify that every board we expect to work under emulation does.
+  #
+  # OpenTitan needs a newer QEMU than 24.04 has available, but 26.04 is
+  # still in preview on GitHub (Sep 2026), so leave this separate for now.
+  ci-qemu:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7
+
       - name: Install QEMU
         run: |
           sudo apt-get update
-          # 24.04 keeps the 32-bit RISC-V emulator in qemu-system-misc. Newer
-          # Ubuntu splits it out into qemu-system-riscv, so this line needs
-          # revisiting whenever the image above moves.
-          sudo apt-get install -y qemu-system-misc
+          # 26.04 splits the 32-bit RISC-V emulator out of qemu-system-misc.
+          sudo apt-get install -y qemu-system-riscv
 
-      # Verify that every board we expect to work under emulation does.
       - name: Run the examples under emulation
         run: |
           cd "${GITHUB_WORKSPACE}"
+          make setup
           make setup-qemu
           make qemu-examples EXAMPLE=console \
             QEMU_EXPECT='Hello world!' QEMU_TIMEOUT=120 </dev/null
