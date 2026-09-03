@@ -172,6 +172,10 @@ $(eval $(call qemu_platform,hifive1,riscv32imac-unknown-none-elf,hifive1,hifive1
 $(eval $(call qemu_platform,opentitan,riscv32imc-unknown-none-elf,opentitan/earlgrey-cw310,earlgrey-cw310,opentitan))
 $(eval $(call qemu_platform,qemu_rv32_virt,riscv32imac-unknown-none-elf,qemu_rv32_virt,qemu_rv32_virt,virt))
 
+# Runs EXAMPLE on every board QEMU can emulate.
+.PHONY: qemu-examples
+qemu-examples: $(foreach platform,$(QEMU_PLATFORMS),qemu-example-$(platform))
+
 # Removes the build artifacts in a Tock source tree we manage. A tree the user
 # supplied is left alone; its build artifacts are theirs, not ours.
 .PHONY: clean-qemu
