@@ -16,7 +16,14 @@ jobs:
     # we can update when we need to. This *could* break if we don't update it
     # until support for this version is dropped, but it is likely we'll have a
     # reason to update to a newer Ubuntu before then anyway.
-    runs-on: ubuntu-22.04
+    #
+    # 24.04 is the floor: the emulated boards need QEMU 8.2 or newer.
+    runs-on: ubuntu-24.04
+
+    # Nothing here should run for hours. The emulated boards carry a timeout of
+    # their own, so a board that hangs fails in seconds; this is the outer bound
+    # on everything else.
+    timeout-minutes: 60
 
     steps:
       # Clones a single commit from the libtock-rs repository. The commit cloned
@@ -41,3 +48,21 @@ jobs:
           make -j2 setup
           make -j2 test
           make demos
+
+      # Installed after the build, so that a failure in the code itself does not
+      # wait on an install it will never use.
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          # 24.04 keeps the 32-bit RISC-V emulator in qemu-system-misc. Newer
+          # Ubuntu splits it out into qemu-system-riscv, so this line needs
+          # revisiting whenever the image above moves.
+          sudo apt-get install -y qemu-system-misc
+
+      # Verify that every board we expect to work under emulation does.
+      - name: Run the examples under emulation
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          make setup-qemu
+          make qemu-examples EXAMPLE=console \
+            QEMU_EXPECT='Hello world!' QEMU_TIMEOUT=120 </dev/null
