@@ -108,12 +108,17 @@ export QEMU_EXPECT
 qemu_run_args = $(if $(QEMU_EXPECT),--expect "$$QEMU_EXPECT",) \
 	$(if $(QEMU_TIMEOUT),--timeout $(QEMU_TIMEOUT),)
 
-# Versions we have run these boards against, and versions known not to work.
+# QEMU version(s) we have tested and know work. Non-exhaustive.
 WORKING_QEMU_VERSIONS := 10.2.1
-BROKEN_QEMU_VERSIONS  := <= 8.1.5
 
 # Checks that a usable QEMU is present, and says which one is about to be used.
-# $(1) is the QEMU machine, or the machines, the caller needs.
+# $(1) is the QEMU machine, or the machines, the caller needs. $(2) is the
+# oldest QEMU those machines are known to work on.
+#
+# Supporting a machine is not the same as running the board on it: an emulated
+# board whose model is older than the kernel expects can start, execute, and
+# print nothing at all, which from the outside is indistinguishable from a
+# hang. Checking the version is what turns that into an answer.
 define check_qemu
 	@command -v "$(LIBTOCK_QEMU)" >/dev/null 2>&1 || { \
 		echo "Could not find '$(LIBTOCK_QEMU)'."; \
@@ -125,20 +130,28 @@ define check_qemu
 	@for machine in $(1); do \
 		"$(LIBTOCK_QEMU)" -M help | grep -q "^$$machine " || { \
 			echo "$$("$(LIBTOCK_QEMU)" --version | head -n1) does not support the" \
-				"'$$machine' machine."; \
-			echo "(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"; \
+				"'$$machine' machine. (tested: $(WORKING_QEMU_VERSIONS))"; \
 			exit 1; \
 		}; \
 	done
+	@have="$$("$(LIBTOCK_QEMU)" --version | sed -n '1s/.*version \([0-9][0-9.]*\).*/\1/p')"; \
+	[ -n "$$have" ] || have="0"; \
+	[ "$$(printf '%s\n%s\n' "$(2)" "$$have" | sort -V | head -n1)" = "$(2)" ] || { \
+		echo "$$("$(LIBTOCK_QEMU)" --version | head -n1) is older than the oldest"; \
+		echo "QEMU that runs '$(1)': $(2). Older ones can start the board and"; \
+		echo "print nothing, so this stops here rather than looking like a hang."; \
+		echo "(tested: $(WORKING_QEMU_VERSIONS))"; \
+		exit 1; \
+	}
 	@echo "Running $$("$(LIBTOCK_QEMU)" --version | head -n1) with machine(s) '$(1)'" \
-		"(tested: $(WORKING_QEMU_VERSIONS); known broken: $(BROKEN_QEMU_VERSIONS))"
+		"(needs $(2) or newer; tested: $(WORKING_QEMU_VERSIONS))"
 endef
 
 # Reports whether a usable QEMU is installed, and what it is. Every machine is
 # checked, as this is the answer to "will the QEMU I have run these boards?".
 .PHONY: setup-qemu
 setup-qemu:
-	$(call check_qemu,$(sort $(QEMU_MACHINES)))
+	$(call check_qemu,$(sort $(QEMU_MACHINES)),$(QEMU_MIN_VERSION))
 
 # Creates the `make kernel-<PLATFORM>` and `make qemu-example-<PLATFORM>`
 # targets for a board that QEMU can emulate. Arguments:
@@ -147,11 +160,13 @@ setup-qemu:
 #  3) The board's directory under the Tock tree's boards/.
 #  4) The name of the kernel binary that board produces.
 #  5) The QEMU machine the board runs on, checked before the board is started.
+#  6) The oldest QEMU known to run this board, checked along with the machine.
 #
 # Each platform is added to QEMU_PLATFORMS, which the `usage` target prints.
 define qemu_platform
 QEMU_PLATFORMS += $(1)
 QEMU_MACHINES += $(5)
+QEMU_MIN_VERSIONS += $(6)
 
 .PHONY: kernel-$(1)
 kernel-$(1): setup-tock
@@ -161,16 +176,25 @@ kernel-$(1): setup-tock
 
 .PHONY: qemu-example-$(1)
 qemu-example-$(1): kernel-$(1) toolchain
-	$$(call check_qemu,$(5))
+	$$(call check_qemu,$(5),$(6))
 	LIBTOCK_PLATFORM="$(1)" cargo run --example "$$(EXAMPLE)" -p libtock \
 		--release --target=$(2) --target-dir=target/qemu-$(1) -- --deploy qemu \
 		--qemu "$$(LIBTOCK_QEMU)" \
 		--kernel $$(TOCK_DIR)/target/$(2)/release/$(4).elf $$(qemu_run_args)
 endef
 
-$(eval $(call qemu_platform,hifive1,riscv32imac-unknown-none-elf,hifive1,hifive1,sifive_e))
-$(eval $(call qemu_platform,opentitan,riscv32imc-unknown-none-elf,opentitan/earlgrey-cw310,earlgrey-cw310,opentitan))
-$(eval $(call qemu_platform,qemu_rv32_virt,riscv32imac-unknown-none-elf,qemu_rv32_virt,qemu_rv32_virt,virt))
+# The minimums below are the oldest QEMU each board is known to run on, not the
+# oldest that works. hifive1 is what CI has run on 8.2.2. Tock's own
+# qemu_rv32_virt README records 8.2.7. opentitan is the one that needs a recent
+# QEMU: 8.2.2 boots it to silence, and Tock's CI builds QEMU from a commit in
+# the 9.2 development cycle to run this board, so 9.2 is the floor we can point
+# at. All three have been run here on 10.2.1.
+$(eval $(call qemu_platform,hifive1,riscv32imac-unknown-none-elf,hifive1,hifive1,sifive_e,8.2))
+$(eval $(call qemu_platform,opentitan,riscv32imc-unknown-none-elf,opentitan/earlgrey-cw310,earlgrey-cw310,opentitan,9.2))
+$(eval $(call qemu_platform,qemu_rv32_virt,riscv32imac-unknown-none-elf,qemu_rv32_virt,qemu_rv32_virt,virt,8.2))
+
+# The oldest QEMU that runs every board, for the checks that cover all of them.
+QEMU_MIN_VERSION := $(lastword $(shell printf '%s\n' $(QEMU_MIN_VERSIONS) | sort -V))
 
 # Runs EXAMPLE on every board QEMU can emulate.
 .PHONY: qemu-examples
