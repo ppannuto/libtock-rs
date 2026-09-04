@@ -15,9 +15,13 @@ jobs:
     # point at a new Ubuntu version. Instead, explicitly specify the version, so
     # we can update when we need to. This *could* break if we don't update it
     # until support for this version is dropped, but it is likely we'll have a
-    # reason to update to a newer Ubuntu before then anyway. Moved from 22.04 to
-    # keep the pin on a current LTS.
-    runs-on: ubuntu-24.04
+    # reason to update to a newer Ubuntu before then anyway.
+    #
+    # Sep 2026: Bumped to ubuntu-26.04 to get a new enough QEMU version
+    runs-on: ubuntu-26.04
+
+    # Sep 2026: About 3x margin over worst-case run currently
+    timeout-minutes: 30
 
     steps:
       # Clones a single commit from the libtock-rs repository. The commit cloned
@@ -43,28 +47,15 @@ jobs:
           make -j2 test
           make demos
 
-  # Verify that every board we expect to work under emulation does.
-  #
-  # OpenTitan needs a newer QEMU than 24.04 has available, but 26.04 is
-  # still in preview on GitHub (Sep 2026), so leave this separate for now.
-  ci-qemu:
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-
-    steps:
-      - name: Clone repository
-        uses: actions/checkout@v7
-
+      # Install and run QEMU after main library build so code errors fail-fast.
       - name: Install QEMU
         run: |
           sudo apt-get update
-          # 26.04 splits the 32-bit RISC-V emulator out of qemu-system-misc.
           sudo apt-get install -y qemu-system-riscv
 
       - name: Run the examples under emulation
         run: |
           cd "${GITHUB_WORKSPACE}"
-          make setup
           make setup-qemu
           make qemu-examples EXAMPLE=console \
             QEMU_EXPECT='Hello world!' QEMU_TIMEOUT=120 </dev/null
